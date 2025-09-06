@@ -134,6 +134,7 @@ def test_hf_value_models():
         input_ids_rmpad, indices, *_ = unpad_input(
             input_ids.unsqueeze(-1), attention_mask
         )  # input_ids_rmpad (total_nnz, ...)
+        import pdb; pdb.set_trace()
         input_ids_rmpad = input_ids_rmpad.transpose(0, 1)  # (1, total_nnz)
 
         # unpad the position_ids to align the rotary

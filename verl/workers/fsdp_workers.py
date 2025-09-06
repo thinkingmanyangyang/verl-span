@@ -78,6 +78,10 @@ from verl.utils.py_functional import convert_to_regular_types
 from verl.workers.config import FSDPCriticConfig, FSDPEngineConfig
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 
+import types
+from torch import nn
+from span_generation.modified_forward import create_modified_causal_lm_forward
+
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
@@ -293,6 +297,20 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 config=actor_model_config,
                 trust_remote_code=trust_remote_code,
             )
+
+            # modify actor module forward
+            # 给模型加入span embedding 参数
+            max_span_len = 128
+            embedding_dim = actor_module.config.hidden_size
+            # model.span_embedding = torch.nn.Parameter(torch.randn(max_span_len, embedding_dim))
+            actor_module.span_embedding = nn.Embedding(max_span_len, embedding_dim, dtype=torch_dtype)
+            # 替换原始forward函数
+            original_forward = actor_module.forward
+            modified_forward_func = create_modified_causal_lm_forward()
+            actor_module.forward = types.MethodType(modified_forward_func, actor_module)
+            print(f"*** 替换原始forward函数 ***")
+            print(f"*** 原始模型 attention implementation: {actor_module.config._attn_implementation} ***")
+            print(f"*** 原始模型 d_type: {actor_module.config.torch_dtype} ***")
 
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:
@@ -782,6 +800,8 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
                 output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
+                print(f"*** actor_rollout_ref_worker compute_log_prob ***")
+                asd
             output = DataProto.from_dict(
                 tensors={"old_log_probs": output, "entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},

@@ -42,6 +42,8 @@ if is_cuda_available:
 elif is_npu_available:
     from transformers.integrations.npu_flash_attention import index_first_axis, pad_input, rearrange, unpad_input
 
+import types
+from span_generation.modified_forward import create_modified_causal_lm_forward
 
 __all__ = ["DataParallelPPOActor"]
 
@@ -258,8 +260,18 @@ class DataParallelPPOActor(BasePPOActor):
                     position_ids=position_ids,
                     **multi_modal_inputs,
                     use_cache=False,
+                    do_span=True,
                     **extra_args,
                 )  # prevent model thinks we are generating
+                print(f"*** do span forward ***")
+                asd
+                # print(f"*** *** call actor_module *** ***")
+                # 保存原始的forward函数（可选）
+                # original_forward = self.actor_module.forward
+                # # 创建修改后的forward函数
+                # modified_forward_func = create_modified_causal_lm_forward()
+                # # 替换原始forward函数
+                # self.actor_module.forward = types.MethodType(modified_forward_func, self.actor_module)
 
                 if self.use_fused_kernels:
                     log_probs = output.log_probs[:, -response_length - 1 : -1]

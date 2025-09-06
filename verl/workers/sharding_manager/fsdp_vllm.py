@@ -333,10 +333,12 @@ class FSDPVLLMShardingManager(BaseShardingManager):
 
         patch_vllm_moe_model_weight_loader(model)
         device = get_device_id()  # used when fsdp2 set cpu_offload_policy
+        filtered_params = {k: v for k, v in updated_params.items() if 'span_embedding' not in k}
         loaded_params = model.load_weights(
             (
                 (name, param.to(device, non_blocking=True).full_tensor() if isinstance(param, DTensor) else param)
-                for name, param in updated_params.items()
+                for name, param in filtered_params.items()
+                # for name, param in updated_params.items()
             )
         )
 

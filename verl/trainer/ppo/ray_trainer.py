@@ -1076,9 +1076,12 @@ class RayPPOTrainer:
             else False
         )
         next_step_profile = False
-
+        count = 0
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
+                count += 1
+                if count % 1 == 0:
+                    pprint(f"Batch {count} of {len(self.train_dataloader)}")
                 metrics = {}
                 timing_raw = {}
 
@@ -1127,6 +1130,7 @@ class RayPPOTrainer:
                             gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
                         timing_raw.update(gen_batch_output.meta_info["timing"])
                         gen_batch_output.meta_info.pop("timing", None)
+                        print(f"*** gen_batch_output ***")
 
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         if self.reward_fn is None:
@@ -1183,6 +1187,8 @@ class RayPPOTrainer:
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
                         old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                        print(f"*** old_log_prob ***")
+                        asd
                         entropys = old_log_prob.batch["entropys"]
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
@@ -1373,7 +1379,7 @@ class RayPPOTrainer:
 
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)
-
+                pprint(metrics)
                 progress_bar.update(1)
                 self.global_steps += 1
 
