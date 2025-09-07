@@ -29,6 +29,94 @@ from verl.trainer.ppo.reward import load_reward_manager
 from verl.utils.device import is_cuda_available
 from verl.utils.import_utils import load_extern_type
 
+import torch
+from verl import DataProto
+from deepscaler.rewards.math_reward import deepscaler_reward_fn
+
+
+def _select_rm_score_fn(data_source):
+    if data_source == 'openai/gsm8k':
+        return gsm8k.compute_score
+    elif data_source == 'lighteval/MATH':
+        return math.compute_score
+    else:
+        return deepscaler_reward_fn
+
+
+class RewardManager():
+    """The reward manager.
+    """
+
+    def __init__(self, tokenizer, num_examine) -> None:
+        self.tokenizer = tokenizer
+        self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
+    def __call__(self, data: DataProto, return_dict=False):
+        """We will expand this function gradually based on the available datasets"""
+        
+        # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
+        if 'rm_scores' in data.batch.keys():
+            if return_dict:
+                return {'reward_tensor': data.batch['rm_scores']}
+            else:
+                return data.batch['rm_scores']
+
+        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
+
+        already_print_data_sources = {}
+
+        from concurrent.futures import ThreadPoolExecutor
+        from typing import Dict, Any
+        #import threading
+        # Thread-safe dict for tracking printed data sources
+        # print_lock = threading.Lock()
+        
+        def process_item(args):
+            i, data_item, already_print_data_sources = args
+            prompt_ids = data_item.batch['prompts']
+            prompt_length = prompt_ids.shape[-1]
+            
+            valid_prompt_length = data_item.batch['attention_mask'][:prompt_length].sum()
+            valid_prompt_ids = prompt_ids[-valid_prompt_length:]
+
+            response_ids = data_item.batch['responses'] 
+            valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
+            valid_response_ids = response_ids[:valid_response_length]
+
+            # decode
+            sequences = torch.cat((valid_prompt_ids, valid_response_ids))
+            sequences_str = self.tokenizer.decode(sequences)
+
+            ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
+
+            # select rm_score
+            data_source = data_item.non_tensor_batch['data_source']
+            compute_score_fn = _select_rm_score_fn(data_source)
+            score = compute_score_fn(solution_str=sequences_str, ground_truth=ground_truth)
+            return i, score, valid_response_length
+
+            
+            # with print_lock:
+            #     if data_source not in already_print_data_sources:
+            #         already_print_data_sources[data_source] = 0
+
+            #     if already_print_data_sources[data_source] < self.num_examine:
+            #         already_print_data_sources[data_source] += 1
+            #         print(sequences_str)      
+            # return i, score, valid_response_length
+
+        # Process items in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=96) as executor:
+            args = [(i, data[i], already_print_data_sources) for i in range(len(data))]
+            results = list(executor.map(process_item, args))
+
+        # Fill reward tensor with results
+        for i, score, valid_response_length in results:
+            reward_tensor[i, valid_response_length - 1] = score
+
+        if return_dict:
+            return {'reward_tensor': reward_tensor}
+        else:
+            return reward_tensor
 
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
 def main(config):
@@ -208,12 +296,15 @@ class TaskRunner:
             mapping[Role.RefPolicy] = global_pool_id
 
         # Load the reward manager for training and validation.
-        reward_fn = load_reward_manager(
-            config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {})
-        )
-        val_reward_fn = load_reward_manager(
-            config, tokenizer, num_examine=1, **config.reward_model.get("reward_kwargs", {})
-        )
+        # reward_fn = load_reward_manager(
+        #     config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {})
+        # )
+        # val_reward_fn = load_reward_manager(
+        #     config, tokenizer, num_examine=1, **config.reward_model.get("reward_kwargs", {})
+        # )
+        reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0)
+        val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1)
+
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 
         from verl.utils.dataset.rl_dataset import collate_fn
